@@ -6,15 +6,29 @@ Forge is designed to give coding agents a reliable execution environment with th
 
 ## Quick Install
 
-Run this command in your terminal (macOS / Linux):
+### macOS / Linux
+
+Run in your terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tracedevtools/Forge-release/main/install.sh | bash
 ```
 
-After running the install command:
+### Windows
+
+Run in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/tracedevtools/Forge-release/main/install.ps1 | iex
+```
+
+---
+
+### After Installing:
 1. Reload your Trace Chrome Extension at `chrome://extensions`
 2. Click **Connect** in the extension — the native Rust agent launches automatically!
+
+---
 
 ## Why Forge?
 
