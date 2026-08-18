@@ -4,6 +4,18 @@
 
 Forge is designed to give coding agents a reliable execution environment with the tools, context, and control they need to work through real-world codebases.
 
+## Quick Install
+
+Run this command in your terminal (macOS / Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tracedevtools/Forge-release/main/install.sh | bash
+```
+
+After running the install command:
+1. Reload your Trace Chrome Extension at `chrome://extensions`
+2. Click **Connect** in the extension — the native Rust agent launches automatically!
+
 ## Why Forge?
 
 Modern coding agents are only as capable as the harness around the model.
@@ -40,6 +52,7 @@ Forge sits between the model and the development environment:
            │
            ▼
       Codebase
+```
 
 ---
 
