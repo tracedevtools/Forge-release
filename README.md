@@ -43,31 +43,5 @@ Trace Forge focuses on:
 - **Large codebases** — designed for exploration, reasoning, modification, and verification across existing projects
 - **Model agnostic** — the harness is independent of the underlying LLM
 
-## Architecture
-
-Forge sits between the model and the development environment:
-
-```text
-┌─────────────────────┐
-│        Model        │
-│ Claude / GPT / etc. │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│    Trace Forge      │
-│  Coding Agent       │
-│      Harness        │
-└──────────┬──────────┘
-           │
-     ┌─────┼─────┐
-     ▼     ▼     ▼
-   Files  Shell  Tools
-           │
-           ▼
-      Codebase
-```
-
----
 
 **Built by [@mrgear111](https://github.com/mrgear111)**
