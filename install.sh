@@ -127,7 +127,7 @@ resolve_release() {
   info_step "2" "Release repository" "${CYAN}github.com/${REPO}${RESET}"
 }
 
-# 3. Download Binary with Live Progress Bar
+# 3. Download Binary with Live Animated Byte Counter
 download_binary() {
   info_step "3" "Downloading binary" "${DIM}fetching engine from ${REPO}...${RESET}"
   
@@ -139,20 +139,56 @@ download_binary() {
   local urls=(
     "https://github.com/${REPO}/releases/latest/download/${ASSET_NAME}"
     "https://github.com/${REPO}/releases/download/v0.1.0/${ASSET_NAME}"
+    "https://raw.githubusercontent.com/${REPO}/main/dist/${ASSET_NAME}"
   )
+
+  local spinner=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+  local spin_idx=0
 
   for url in "${urls[@]}"; do
     rm -f "$temp_dest"
-    printf "\n"
-    if curl -# -fL "$url" -o "$temp_dest"; then
-      if [ -s "$temp_dest" ]; then
-        mv -f "$temp_dest" "$final_dest"
-        chmod +x "$final_dest"
-        downloaded=true
-        printf "\n"
-        success_step "Binary installed to ${CYAN}${final_dest}${RESET}"
-        break
+    
+    # Start download in background
+    curl -fsSL "$url" -o "$temp_dest" 2>/dev/null &
+    local curl_pid=$!
+
+    # Live animated progress loop
+    while kill -0 "$curl_pid" 2>/dev/null; do
+      local current_bytes=0
+      if [ -f "$temp_dest" ]; then
+        if [ "$(uname -s)" = "Darwin" ]; then
+          current_bytes=$(stat -f%z "$temp_dest" 2>/dev/null || echo 0)
+        else
+          current_bytes=$(stat -c%s "$temp_dest" 2>/dev/null || echo 0)
+        fi
       fi
+      local current_mb
+      current_mb=$(awk "BEGIN {printf \"%.1f\", $current_bytes / 1048576}")
+      local spin_char="${spinner[$spin_idx]}"
+      spin_idx=$(( (spin_idx + 1) % 10 ))
+
+      printf "\r      ${CYAN}${spin_char}${RESET} ${BOLD}Downloading engine...${RESET} ${CYAN}${current_mb} MB${RESET} ${DIM}(streaming from GitHub releases)${RESET}   "
+      sleep 0.15
+    done
+
+    wait "$curl_pid" 2>/dev/null || true
+
+    if [ -f "$temp_dest" ] && [ -s "$temp_dest" ]; then
+      local final_bytes=0
+      if [ "$(uname -s)" = "Darwin" ]; then
+        final_bytes=$(stat -f%z "$temp_dest" 2>/dev/null || echo 0)
+      else
+        final_bytes=$(stat -c%s "$temp_dest" 2>/dev/null || echo 0)
+      fi
+      local final_mb
+      final_mb=$(awk "BEGIN {printf \"%.1f\", $final_bytes / 1048576}")
+
+      printf "\r      ${GREEN}✓${RESET} ${BOLD}Downloaded engine:${RESET} ${GREEN}${final_mb} MB${RESET}                                        \n"
+      mv -f "$temp_dest" "$final_dest"
+      chmod +x "$final_dest"
+      downloaded=true
+      success_step "Binary installed to ${CYAN}${final_dest}${RESET}"
+      break
     fi
     rm -f "$temp_dest"
   done
