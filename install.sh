@@ -1,147 +1,268 @@
 #!/usr/bin/env bash
-# Trace Rust Agent — One-line Native Host Installer
+# ==============================================================================
+#  TRACE FORGE — Autonomous Installer (macOS & Linux)
+#  Installs the native engine & registers Chrome Native Messaging host.
+# ==============================================================================
 set -euo pipefail
 
-REPO="tracedevtools/Forge-release"
-BINARY_NAME="trace-http-bridge"
-HOST_NAME="dev.gettrace.rust.host"
+# ANSI Colors
+BOLD="\033[1m"
+DIM="\033[2m"
+CYAN="\033[38;2;6;182;212m"
+BLUE="\033[38;2;99;102;241m"
+GREEN="\033[38;2;34;197;94m"
+YELLOW="\033[38;2;234;179;8m"
+RED="\033[38;2;239;68;68m"
+RESET="\033[0m"
 
-# Allowed Chrome Extension IDs
-EXTENSION_IDS=(
+# Fallback if truecolor not supported
+if [ -z "${TERM:-}" ] || [ "$TERM" = "dumb" ]; then
+  BOLD=""
+  DIM=""
+  CYAN="\033[36m"
+  BLUE="\033[34m"
+  GREEN="\033[32m"
+  YELLOW="\033[33m"
+  RED="\033[31m"
+  RESET="\033[0m"
+fi
+
+HOST_NAME="dev.gettrace.rust.host"
+REPO="tracedevtools/Forge-release"
+DEFAULT_WORKSPACE="$HOME/Documents/Trace/greenfield"
+INSTALL_DIR="$HOME/.local/share/trace-rust/native-host"
+BINARY_NAME="trace-http-bridge"
+
+ALLOWED_EXTENSION_IDS=(
   "akabcpcfdkapeompkabhpdaofmmfjcdh"
   "adiiaelmeohkajiddjedcgjmkkhjnfcm"
   "hmlngfjlohkgbhkkhomipdbgkdgogolc"
-  "nihkoalbpdeldlfkbpadfjidaampnobn"
   "jbndfblonpaiajoilmcfjnilbfidnikg"
+  "nihkoalbpdeldlfkbpadfjidaampnobn"
+  "ijempdjhomdhgjbjekbmdhlknmgmiahe"
+  "picocfmhmdhpefnlajhbgmindmnikpip"
 )
 
-# Append custom extension ID if passed via environment
-if [ -n "${TRACE_EXTENSION_ID:-}" ]; then
-  EXTENSION_IDS+=("$TRACE_EXTENSION_ID")
-fi
+# Banner
+print_banner() {
+  printf "\n"
+  printf "${CYAN}${BOLD}"
+  cat << "BANNER"
+  ______                     ______                    
+ /_  __/________ _________   / ____/___  _________ ____ 
+  / / / ___/ __ `/ ___/ _ \ / /_  / __ \/ ___/ __ `/ _ \
+ / / / /  / /_/ / /__/  __// __/ / /_/ / /  / /_/ /  __/
+/_/ /_/   \__,_/\___/\___//_/    \____/_/   \__, /\___/ 
+                                           /____/       
+BANNER
+  printf "${RESET}"
+  printf "        ${BLUE}⚡ BROWSER-NATIVE AI CODING ENGINE${RESET}\n"
+  printf "${DIM}──────────────────────────────────────────────────────────────────${RESET}\n\n"
+}
 
-info() { printf '\033[1;34m%s\033[0m\n' "$*"; }
-ok()   { printf '\033[1;32m%s\033[0m\n' "$*"; }
-err()  { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
+info_step() {
+  local num="$1"
+  local title="$2"
+  local desc="$3"
+  printf "  ${BLUE}${BOLD}[${num}/4]${RESET} ${title} ${DIM}→${RESET} ${desc}\n"
+}
 
-echo ""
-info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-info "   ⚡ Installing Trace Rust Native Agent Host      "
-info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
+success_step() {
+  local msg="$1"
+  printf "      ${GREEN}✓${RESET} ${msg}\n"
+}
 
-# 1. Determine OS and target paths
-OS="$(uname -s)"
-case "$OS" in
-  Darwin)
-    INSTALL_DIR="$HOME/.local/share/trace-rust/native-host"
-    CHROME_HOST_DIRS=(
+warn_step() {
+  local msg="$1"
+  printf "      ${YELLOW}⚠${RESET} ${msg}\n"
+}
+
+error_exit() {
+  printf "\n  ${RED}${BOLD}✗ Installation failed:${RESET} %s\n\n" "$1" >&2
+  exit 1
+}
+
+# 1. Platform Detection & Asset Candidates
+detect_platform() {
+  OS="$(uname -s)"
+  ARCH="$(uname -m)"
+  ASSET_CANDIDATES=()
+  
+  case "$OS" in
+    Darwin)
+      case "$ARCH" in
+        arm64)
+          PLATFORM_LABEL="macOS (Apple Silicon arm64)"
+          ASSET_CANDIDATES=(
+            "trace-http-bridge-aarch64-apple-darwin"
+            "trace-http-bridge"
+            "trace-http-bridge-macos-arm64"
+          )
+          ;;
+        x86_64)
+          PLATFORM_LABEL="macOS (Intel x86_64)"
+          ASSET_CANDIDATES=(
+            "trace-http-bridge-x86_64-apple-darwin"
+            "trace-http-bridge-macos-x86_64"
+            "trace-http-bridge"
+          )
+          ;;
+        *) error_exit "Unsupported macOS architecture: $ARCH" ;;
+      esac
+      ;;
+    Linux)
+      case "$ARCH" in
+        x86_64)
+          PLATFORM_LABEL="Linux (x86_64)"
+          ASSET_CANDIDATES=(
+            "trace-http-bridge-x86_64-unknown-linux-gnu"
+            "trace-http-bridge-linux-x86_64"
+            "trace-http-bridge"
+          )
+          ;;
+        aarch64|arm64)
+          PLATFORM_LABEL="Linux (ARM64)"
+          ASSET_CANDIDATES=(
+            "trace-http-bridge-aarch64-unknown-linux-gnu"
+            "trace-http-bridge-linux-aarch64"
+            "trace-http-bridge"
+          )
+          ;;
+        *) error_exit "Unsupported Linux architecture: $ARCH" ;;
+      esac
+      ;;
+    *)
+      error_exit "Unsupported OS: $OS. Trace Forge supports macOS, Linux, and Windows (via install.ps1)."
+      ;;
+  esac
+
+  info_step "1" "Platform detected" "${CYAN}${PLATFORM_LABEL}${RESET}"
+}
+
+# 2. Resolve Release
+resolve_release() {
+  info_step "2" "Release repository" "${CYAN}github.com/${REPO}${RESET}"
+}
+
+# 3. Download Binary with Realtime Progress
+download_binary() {
+  info_step "3" "Downloading binary" "${DIM}fetching release from ${REPO}...${RESET}"
+  
+  mkdir -p "$INSTALL_DIR"
+  local temp_dest="$INSTALL_DIR/${BINARY_NAME}.tmp"
+  local final_dest="$INSTALL_DIR/${BINARY_NAME}"
+  local downloaded=false
+
+  for asset in "${ASSET_CANDIDATES[@]}"; do
+    local urls=(
+      "https://github.com/${REPO}/releases/latest/download/${asset}"
+      "https://raw.githubusercontent.com/${REPO}/main/dist/${asset}"
+      "https://raw.githubusercontent.com/${REPO}/main/${asset}"
+    )
+
+    for url in "${urls[@]}"; do
+      if curl -# -fSL "$url" -o "$temp_dest" 2>/dev/null; then
+        if [ -s "$temp_dest" ]; then
+          mv -f "$temp_dest" "$final_dest"
+          chmod +x "$final_dest"
+          downloaded=true
+          success_step "Downloaded ${CYAN}${asset}${RESET} from ${REPO}"
+          break 2
+        fi
+        rm -f "$temp_dest"
+      fi
+    done
+  done
+
+  if [ "$downloaded" = false ]; then
+    if [ -f "$final_dest" ] && [ -x "$final_dest" ]; then
+      warn_step "Remote release unreachable; using existing binary at ${CYAN}${final_dest}${RESET}"
+    else
+      rm -f "$temp_dest"
+      error_exit "Could not download binary from https://github.com/${REPO}. Please verify release assets on GitHub."
+    fi
+  fi
+}
+
+# 4. Register Native Messaging Host
+register_manifests() {
+  info_step "4" "Registering native host" "${CYAN}${HOST_NAME}${RESET}"
+  
+  local final_dest="$INSTALL_DIR/${BINARY_NAME}"
+  
+  # Build JSON manifest
+  local manifest_json="{\n  \"name\": \"${HOST_NAME}\",\n  \"description\": \"Trace Forge Native Messaging Host\",\n  \"path\": \"${final_dest}\",\n  \"type\": \"stdio\",\n  \"allowed_origins\": [\n"
+  local count=${#ALLOWED_EXTENSION_IDS[@]}
+  for ((i=0; i<count; i++)); do
+    manifest_json+="    \"chrome-extension://${ALLOWED_EXTENSION_IDS[i]}/\""
+    if [ $i -lt $((count - 1)) ]; then
+      manifest_json+=",\n"
+    else
+      manifest_json+="\n"
+    fi
+  done
+  manifest_json+="  ]\n}"
+
+  # Target Browser Directories
+  local target_dirs=()
+  if [ "$(uname -s)" = "Darwin" ]; then
+    target_dirs+=(
       "$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
-      "$HOME/Library/Application Support/Google/Chrome Canary/NativeMessagingHosts"
       "$HOME/Library/Application Support/Chromium/NativeMessagingHosts"
       "$HOME/Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts"
       "$HOME/Library/Application Support/Microsoft Edge/NativeMessagingHosts"
+      "$HOME/Library/Application Support/Arc/User Data/NativeMessagingHosts"
     )
-    ;;
-  Linux)
-    INSTALL_DIR="$HOME/.local/share/trace-rust/native-host"
-    CHROME_HOST_DIRS=(
+  else
+    target_dirs+=(
       "$HOME/.config/google-chrome/NativeMessagingHosts"
       "$HOME/.config/chromium/NativeMessagingHosts"
       "$HOME/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts"
       "$HOME/.config/microsoft-edge/NativeMessagingHosts"
     )
-    ;;
-  *)
-    err "Unsupported operating system: $OS. Trace Native Host currently supports macOS and Linux."
-    ;;
-esac
-
-mkdir -p "$INSTALL_DIR"
-
-# 2. Download the prebuilt binary from GitHub Release
-TARGET_BIN="$INSTALL_DIR/$BINARY_NAME"
-VERSION="${TRACE_VERSION:-latest}"
-
-if [ "$VERSION" = "latest" ]; then
-  DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${BINARY_NAME}"
-else
-  DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${BINARY_NAME}"
-fi
-
-info "• Downloading ${BINARY_NAME}..."
-tmpfile=$(mktemp)
-trap 'rm -f "$tmpfile"' EXIT
-
-if ! curl -fSL "$DOWNLOAD_URL" -o "$tmpfile" 2>/dev/null; then
-  # Fallback to direct releases if latest redirect is resolving differently
-  FALLBACK_URL="https://github.com/${REPO}/releases/download/untagged-2766db8a16269b3aa27c/${BINARY_NAME}"
-  info "  Attempting release download..."
-  curl -fSL "$FALLBACK_URL" -o "$tmpfile" || err "Failed to download binary from GitHub Releases ($DOWNLOAD_URL)"
-fi
-
-install -m 755 "$tmpfile" "$TARGET_BIN"
-
-# Remove macOS quarantine attribute
-if [ "$OS" = "Darwin" ]; then
-  xattr -d com.apple.quarantine "$TARGET_BIN" 2>/dev/null || true
-fi
-ok "✓ Binary installed at: $TARGET_BIN"
-
-# 3. Build allowed_origins JSON array
-ORIGINS=""
-for id in "${EXTENSION_IDS[@]}"; do
-  [ -n "$id" ] || continue
-  if [ -n "$ORIGINS" ]; then
-    ORIGINS="${ORIGINS},\n"
   fi
-  ORIGINS="${ORIGINS}    \"chrome-extension://${id}/\""
-done
 
-# 4. Generate Chrome Native Messaging Host Manifest
-MANIFEST_CONTENT=$(cat <<EOF
-{
-  "name": "${HOST_NAME}",
-  "description": "Trace Rust Agent Native Messaging Host",
-  "path": "${TARGET_BIN}",
-  "type": "stdio",
-  "allowed_origins": [
-$(printf "$ORIGINS")
-  ]
-}
-EOF
-)
+  local registered=0
+  for dir in "${target_dirs[@]}"; do
+    mkdir -p "$dir" 2>/dev/null || true
+    if [ -d "$dir" ]; then
+      printf "%b" "$manifest_json" > "$dir/${HOST_NAME}.json" 2>/dev/null && ((registered++)) || true
+    fi
+  done
 
-registered_count=0
-for host_dir in "${CHROME_HOST_DIRS[@]}"; do
-  parent_browser_dir="$(dirname "$host_dir")"
-  # Only register if the browser is installed / directory exists, or for default Chrome
-  if [ -d "$parent_browser_dir" ] || [[ "$host_dir" == *"Google/Chrome/"* ]] || [[ "$host_dir" == *"google-chrome"* ]]; then
-    mkdir -p "$host_dir"
-    echo "$MANIFEST_CONTENT" > "$host_dir/${HOST_NAME}.json"
-    registered_count=$((registered_count + 1))
-  fi
-done
-ok "✓ Registered Chrome Native Messaging Manifest for $registered_count browser(s)"
+  success_step "Native messaging manifest registered across ${registered} browser profiles"
 
-# 5. Create default greenfield workspace
-GREENFIELD_DIR="$HOME/Documents/Trace/greenfield"
-mkdir -p "$GREENFIELD_DIR"
-if [ ! -f "$GREENFIELD_DIR/README.md" ]; then
-  cat > "$GREENFIELD_DIR/README.md" <<EOF
+  # 5. Greenfield Workspace
+  mkdir -p "$DEFAULT_WORKSPACE" 2>/dev/null || true
+  if [ ! -f "$DEFAULT_WORKSPACE/README.md" ]; then
+    cat << 'README' > "$DEFAULT_WORKSPACE/README.md"
 # Trace Greenfield
-This is your default Trace workspace for new projects.
-EOF
-fi
-ok "✓ Workspace ready: $GREENFIELD_DIR"
+This is your default Trace workspace for building new web applications.
+Trace creates new projects here when you click Connect in the Trace extension.
+README
+  fi
+  success_step "Workspace ready at ${DIM}${DEFAULT_WORKSPACE}${RESET}"
+}
 
-echo ""
-ok "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-ok "✅ Trace Native Host installation complete!"
-ok "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "Next steps:"
-echo "  1. Reload your Trace extension in Chrome (chrome://extensions)"
-echo "  2. Click 'Connect' inside the extension"
-echo "  3. Chrome will automatically launch the Rust agent binary"
-echo ""
+# Summary Screen
+print_summary() {
+  local final_dest="$INSTALL_DIR/${BINARY_NAME}"
+  printf "\n${DIM}──────────────────────────────────────────────────────────────────${RESET}\n"
+  printf "  ${GREEN}${BOLD}✅ Trace Forge installed successfully!${RESET}\n\n"
+  printf "  ${BOLD}Binary:${RESET}    ${CYAN}%s${RESET}\n" "$final_dest"
+  printf "  ${BOLD}Host ID:${RESET}   ${DIM}%s${RESET}\n" "$HOST_NAME"
+  printf "  ${BOLD}Workspace:${RESET} ${DIM}%s${RESET}\n\n" "$DEFAULT_WORKSPACE"
+  printf "  ${BLUE}${BOLD}🚀 Next Step:${RESET} Open Chrome and click ${BOLD}Connect${RESET} in the Trace panel.\n"
+  printf "${DIM}──────────────────────────────────────────────────────────────────${RESET}\n\n"
+}
+
+main() {
+  print_banner
+  detect_platform
+  resolve_release
+  download_binary
+  register_manifests
+  print_summary
+}
+
+main "$@"

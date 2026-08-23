@@ -1,89 +1,241 @@
-# Trace Rust Agent — Windows One-line Installer
-$ErrorActionPreference = "Stop"
+# ==============================================================================
+#  TRACE FORGE — Autonomous Installer (Windows PowerShell)
+#  Installs the native engine & registers Chrome Native Messaging host.
+# ==============================================================================
 
-$Repo = "tracedevtools/Forge-release"
-$Version = "v0.1.0"
-$BinaryName = "trace-http-bridge.exe"
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Stop'
+
+# ANSI Colors
+$ESC = [char]27
+$BOLD = "$ESC[1m"
+$DIM = "$ESC[2m"
+$CYAN = "$ESC[38;2;6;182;212m"
+$BLUE = "$ESC[38;2;99;102;241m"
+$GREEN = "$ESC[38;2;34;197;94m"
+$YELLOW = "$ESC[38;2;234;179;8m"
+$RED = "$ESC[38;2;239;68;68m"
+$RESET = "$ESC[0m"
+
 $HostName = "dev.gettrace.rust.host"
+$Repo = "tracedevtools/Forge-release"
+$BinaryName = "trace-http-bridge.exe"
 
-$ExtensionIds = @(
-  "akabcpcfdkapeompkabhpdaofmmfjcdh",
-  "adiiaelmeohkajiddjedcgjmkkhjnfcm",
-  "hmlngfjlohkgbhkkhomipdbgkdgogolc",
-  "nihkoalbpdeldlfkbpadfjidaampnobn",
-  "jbndfblonpaiajoilmcfjnilbfidnikg"
+$AssetCandidates = @(
+    "trace-http-bridge-x86_64-pc-windows-msvc.exe",
+    "trace-http-bridge.exe",
+    "trace-http-bridge-windows-x86_64.exe"
 )
 
-if ($env:TRACE_EXTENSION_ID) {
-  $ExtensionIds += $env:TRACE_EXTENSION_ID
+$LocalAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE "AppData\Local" }
+$InstallDir = Join-Path $LocalAppData "trace-rust\native-host"
+$FinalBinaryPath = Join-Path $InstallDir $BinaryName
+$WorkspaceDir = Join-Path $env:USERPROFILE "Documents\Trace\greenfield"
+
+$AllowedExtensionIds = @(
+    "akabcpcfdkapeompkabhpdaofmmfjcdh",
+    "adiiaelmeohkajiddjedcgjmkkhjnfcm",
+    "hmlngfjlohkgbhkkhomipdbgkdgogolc",
+    "jbndfblonpaiajoilmcfjnilbfidnikg",
+    "nihkoalbpdeldlfkbpadfjidaampnobn",
+    "ijempdjhomdhgjbjekbmdhlknmgmiahe",
+    "picocfmhmdhpefnlajhbgmindmnikpip"
+)
+
+function Show-Banner {
+    Write-Host ""
+    Write-Host "$CYAN$BOLD"
+    Write-Host "  ______                     ______                    "
+    Write-Host " /_  __/________ _________   / ____/___  _________ ____ "
+    Write-Host "  / / / ___/ __ `/ ___/ _ \ / /_  / __ \/ ___/ __ `/ _ \"
+    Write-Host " / / / /  / /_/ / /__/  __// __/ / /_/ / /  / /_/ /  __/"
+    Write-Host "/_/ /_/   \__,_/\___/\___//_/    \____/_/   \__, /\___/ "
+    Write-Host "                                           /____/       "
+    Write-Host "$RESET"
+    Write-Host "        $BLUE⚡ BROWSER-NATIVE AI CODING ENGINE$RESET"
+    Write-Host "$DIM──────────────────────────────────────────────────────────────────$RESET`n"
 }
 
-Write-Host "`n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "   ⚡ Installing Trace Rust Native Agent Host      " -ForegroundColor Cyan
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`n" -ForegroundColor Cyan
-
-# 1. Target directory: %LOCALAPPDATA%\trace-rust\native-host
-$InstallDir = Join-Path $env:LOCALAPPDATA "trace-rust\native-host"
-New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-
-$TargetBin = Join-Path $InstallDir $BinaryName
-$DownloadUrl = "https://github.com/$Repo/releases/download/$Version/$BinaryName"
-
-# 2. Download binary
-Write-Host "• Downloading $BinaryName from GitHub..." -ForegroundColor Gray
-try {
-  Invoke-WebRequest -Uri $DownloadUrl -OutFile $TargetBin -UseBasicParsing
-  Write-Host "✓ Binary installed at: $TargetBin" -ForegroundColor Green
-} catch {
-  Write-Warning "Could not download from $DownloadUrl. Make sure $BinaryName is attached to release $Version."
+function Show-Step($num, $title, $desc) {
+    Write-Host "  $BLUE$BOLD[$num/4]$RESET $title $DIM→$RESET $desc"
 }
 
-# 3. Create Manifest JSON
-$ManifestPath = Join-Path $InstallDir "$HostName.json"
-$EscapedTargetBin = $TargetBin.Replace('\', '\\')
+function Show-Success($msg) {
+    Write-Host "      $GREEN✓$RESET $msg"
+}
 
-$OriginsList = ($ExtensionIds | ForEach-Object { "    `"chrome-extension://$_/`"" }) -join ",`n"
+function Show-Warn($msg) {
+    Write-Host "      $YELLOW⚠$RESET $msg"
+}
 
-$ManifestContent = @"
+function Show-Error($msg) {
+    Write-Host "`n  $RED${BOLD}✗ Installation failed:$RESET $msg`n" -ForegroundColor Red
+    exit 1
+}
+
+# 1. Platform Detection
+function Detect-Platform {
+    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    Show-Step "1" "Platform detected" "$CYAN Windows x86_64 ($arch) $RESET"
+}
+
+# 2. Resolve Engine Version
+function Resolve-Release {
+    Show-Step "2" "Release repository" "$CYAN github.com/$Repo $RESET"
+}
+
+# 3. Realtime Download
+function Download-Binary {
+    Show-Step "3" "Downloading binary" "$DIM fetching from $Repo...$RESET"
+    
+    if (-not (Test-Path $InstallDir)) {
+        New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    }
+
+    $tempFile = Join-Path $InstallDir "$BinaryName.tmp"
+    $downloadSuccess = $false
+
+    foreach ($asset in $AssetCandidates) {
+        $urls = @(
+            "https://github.com/$Repo/releases/latest/download/$asset",
+            "https://raw.githubusercontent.com/$Repo/main/dist/$asset",
+            "https://raw.githubusercontent.com/$Repo/main/$asset"
+        )
+
+        foreach ($url in $urls) {
+            try {
+                $webClient = New-Object System.Net.WebClient
+                
+                Register-ObjectEvent -InputObject $webClient -EventName DownloadProgressChanged -Action {
+                    $percent = $EventArgs.ProgressPercentage
+                    $bytesIn = [math]::Round($EventArgs.BytesReceived / 1MB, 1)
+                    $totalBytes = [math]::Round($EventArgs.TotalBytesToReceive / 1MB, 1)
+                    
+                    if ($totalBytes -gt 0) {
+                        $barLength = 28
+                        $completed = [math]::Floor(($percent / 100) * $barLength)
+                        $remaining = $barLength - $completed
+                        $bar = ("█" * $completed) + ("░" * $remaining)
+                        Write-Host -NoNewline "`r      $script:CYAN[$bar] $percent%  $bytesIn MB / $totalBytes MB$script:RESET"
+                    }
+                } | Out-Null
+
+                $downloadTask = $webClient.DownloadFileTaskAsync($url, $tempFile)
+                while (-not $downloadTask.IsCompleted -and -not $downloadTask.IsFaulted) {
+                    Start-Sleep -Milliseconds 100
+                }
+                if ($downloadTask.IsCompleted -and (Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 1000)) {
+                    $downloadSuccess = $true
+                    Write-Host ""
+                    Show-Success "Downloaded $CYAN$asset$RESET from $Repo"
+                    break
+                }
+            } catch {
+                # Fallback to Invoke-WebRequest
+                try {
+                    Invoke-WebRequest -Uri $url -OutFile $tempFile -UseBasicParsing
+                    if ((Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 1000)) {
+                        $downloadSuccess = $true
+                        Show-Success "Downloaded $CYAN$asset$RESET from $Repo"
+                        break
+                    }
+                } catch {}
+            }
+        }
+        if ($downloadSuccess) { break }
+    }
+
+    if ($downloadSuccess -and (Test-Path $tempFile)) {
+        Move-Item -Path $tempFile -Destination $FinalBinaryPath -Force
+        Show-Success "Binary installed to $CYAN$FinalBinaryPath$RESET"
+    } else {
+        if (Test-Path $tempFile) { Remove-Item $tempFile -Force }
+        if (Test-Path $FinalBinaryPath) {
+            Show-Warn "Remote release unreachable; using existing binary at $CYAN$FinalBinaryPath$RESET"
+        } else {
+            Show-Error "Could not download binary from https://github.com/$Repo. Please verify release assets on GitHub."
+        }
+    }
+}
+
+# 4. Register Manifest & Windows Registry
+function Register-Manifests {
+    Show-Step "4" "Registering native host" "$CYAN$HostName$RESET"
+
+    $escapedPath = $FinalBinaryPath.Replace('\', '\\')
+    $allowedOriginsJson = ($AllowedExtensionIds | ForEach-Object { "    `"chrome-extension://$_/`"" }) -join ",`n"
+
+    $manifestContent = @"
 {
   "name": "$HostName",
-  "description": "Trace Rust Agent Native Messaging Host",
-  "path": "$EscapedTargetBin",
+  "description": "Trace Forge Native Messaging Host",
+  "path": "$escapedPath",
   "type": "stdio",
   "allowed_origins": [
-$OriginsList
+$allowedOriginsJson
   ]
 }
 "@
 
-[System.IO.File]::WriteAllText($ManifestPath, $ManifestContent)
-Write-Host "✓ Manifest created at: $ManifestPath" -ForegroundColor Green
+    $manifestPath = Join-Path $InstallDir "$HostName.json"
+    [System.IO.File]::WriteAllText($manifestPath, $manifestContent, [System.Text.Encoding]::UTF8)
 
-# 4. Register in Windows Registry
-$RegPaths = @(
-  "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$HostName",
-  "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$HostName",
-  "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\$HostName"
-)
+    # Register in Windows Registry for Chrome, Edge, Brave
+    $regPaths = @(
+        "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$HostName",
+        "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$HostName",
+        "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\$HostName"
+    )
 
-foreach ($regPath in $RegPaths) {
-  try {
-    New-Item -Path $regPath -Force | Out-Null
-    Set-ItemProperty -Path $regPath -Name "(default)" -Value $ManifestPath
-  } catch {
-    # Best-effort across multiple browsers
-  }
+    $registeredCount = 0
+    foreach ($regPath in $regPaths) {
+        try {
+            if (-not (Test-Path $regPath)) {
+                New-Item -Path $regPath -Force | Out-Null
+            }
+            Set-ItemProperty -Path $regPath -Name "(default)" -Value $manifestPath -Force | Out-Null
+            $registeredCount++
+        } catch {}
+    }
+
+    Show-Success "Native messaging registered in Windows Registry ($registeredCount browser profiles)"
+
+    # Greenfield workspace
+    if (-not (Test-Path $WorkspaceDir)) {
+        New-Item -ItemType Directory -Path $WorkspaceDir -Force | Out-Null
+    }
+    $readmePath = Join-Path $WorkspaceDir "README.md"
+    if (-not (Test-Path $readmePath)) {
+        @"
+# Trace Greenfield
+This is your default Trace workspace for building new web applications.
+Trace creates new projects here when you click Connect in the Trace extension.
+"@ | Out-File -FilePath $readmePath -Encoding utf8
+    }
+
+    Show-Success "Workspace ready at $DIM$WorkspaceDir$RESET"
 }
-Write-Host "✓ Registered in Windows Registry for Chrome / Edge / Brave" -ForegroundColor Green
 
-# 5. Default greenfield workspace
-$Greenfield = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Trace\greenfield"
-New-Item -ItemType Directory -Force -Path $Greenfield | Out-Null
+# Summary Screen
+function Show-Summary {
+    Write-Host "`n$DIM──────────────────────────────────────────────────────────────────$RESET"
+    Write-Host "  $GREEN${BOLD}✅ Trace Forge installed successfully!$RESET`n"
+    Write-Host "  ${BOLD}Binary:$RESET    $CYAN$FinalBinaryPath$RESET"
+    Write-Host "  ${BOLD}Host ID:$RESET   $DIM$HostName$RESET"
+    Write-Host "  ${BOLD}Workspace:$RESET $DIM$WorkspaceDir$RESET`n"
+    Write-Host "  $BLUE${BOLD}🚀 Next Step:$RESET Open Chrome and click ${BOLD}Connect$RESET in the Trace panel."
+    Write-Host "$DIM──────────────────────────────────────────────────────────────────$RESET`n"
+}
 
-Write-Host "`n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Green
-Write-Host "✅ Trace Native Host installation complete!" -ForegroundColor Green
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`n" -ForegroundColor Green
-Write-Host "Next steps:"
-Write-Host "  1. Reload your Trace extension in Chrome (chrome://extensions)"
-Write-Host "  2. Click 'Connect' inside the extension"
-Write-Host "  3. Chrome will automatically launch the Rust agent binary`n"
+function Main {
+    Show-Banner
+    Detect-Platform
+    Resolve-Release
+    Download-Binary
+    Register-Manifests
+    Show-Summary
+}
+
+Main
