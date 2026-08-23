@@ -90,32 +90,16 @@ detect_platform() {
   case "$OS" in
     Darwin)
       case "$ARCH" in
-        arm64)
-          PLATFORM_LABEL="macOS (Apple Silicon arm64)"
-          ASSET_NAME="trace-http-bridge"
-          EXPECTED_SIZE=37886048
-          ;;
-        x86_64)
-          PLATFORM_LABEL="macOS (Intel x86_64)"
-          ASSET_NAME="trace-http-bridge"
-          EXPECTED_SIZE=37886048
-          ;;
-        *) error_exit "Unsupported macOS architecture: $ARCH" ;;
+        arm64)  PLATFORM_LABEL="macOS (Apple Silicon arm64)" ; ASSET_NAME="trace-http-bridge" ;;
+        x86_64) PLATFORM_LABEL="macOS (Intel x86_64)" ; ASSET_NAME="trace-http-bridge" ;;
+        *)      error_exit "Unsupported macOS architecture: $ARCH" ;;
       esac
       ;;
     Linux)
       case "$ARCH" in
-        x86_64)
-          PLATFORM_LABEL="Linux (x86_64)"
-          ASSET_NAME="trace-http-bridge"
-          EXPECTED_SIZE=37886048
-          ;;
-        aarch64|arm64)
-          PLATFORM_LABEL="Linux (ARM64)"
-          ASSET_NAME="trace-http-bridge"
-          EXPECTED_SIZE=37886048
-          ;;
-        *) error_exit "Unsupported Linux architecture: $ARCH" ;;
+        x86_64)        PLATFORM_LABEL="Linux (x86_64)" ; ASSET_NAME="trace-http-bridge" ;;
+        aarch64|arm64) PLATFORM_LABEL="Linux (ARM64)" ; ASSET_NAME="trace-http-bridge" ;;
+        *)             error_exit "Unsupported Linux architecture: $ARCH" ;;
       esac
       ;;
     *)
@@ -131,7 +115,7 @@ resolve_release() {
   info_step "2" "Release repository" "${CYAN}github.com/${REPO} (v0.1.0)${RESET}"
 }
 
-# 3. Download Binary with Live Block Progress Bar
+# 3. Download Binary with Live Progress Bar
 download_binary() {
   info_step "3" "Downloading binary" "${DIM}fetching engine from ${REPO}...${RESET}"
   
@@ -145,65 +129,18 @@ download_binary() {
     "https://github.com/${REPO}/releases/latest/download/${ASSET_NAME}"
   )
 
-  local bar_width=26
-  local total_mb
-  total_mb=$(awk "BEGIN {printf \"%.1f\", $EXPECTED_SIZE / 1048576}")
-
   for url in "${urls[@]}"; do
     rm -f "$temp_dest"
-    
-    # Fast download with direct connection
-    curl -fsSL --tcp-nodelay "$url" -o "$temp_dest" 2>/dev/null &
-    local curl_pid=$!
-
-    # Real-time block progress bar loop
-    while kill -0 "$curl_pid" 2>/dev/null; do
-      local current_bytes=0
-      if [ -f "$temp_dest" ]; then
-        if [ "$(uname -s)" = "Darwin" ]; then
-          current_bytes=$(stat -f%z "$temp_dest" 2>/dev/null || echo 0)
-        else
-          current_bytes=$(stat -c%s "$temp_dest" 2>/dev/null || echo 0)
-        fi
+    printf "      ${CYAN}⬇ Downloading trace-http-bridge (~36 MB):${RESET}\n"
+    if curl --fail --location --progress-bar "$url" --output "$temp_dest"; then
+      if [ -s "$temp_dest" ]; then
+        mv -f "$temp_dest" "$final_dest"
+        chmod +x "$final_dest"
+        downloaded=true
+        printf "\n"
+        success_step "Binary installed to ${CYAN}${final_dest}${RESET}"
+        break
       fi
-
-      local current_mb
-      current_mb=$(awk "BEGIN {printf \"%.1f\", $current_bytes / 1048576}")
-      local pct
-      pct=$(awk "BEGIN {p = int(($current_bytes / $EXPECTED_SIZE) * 100); if (p > 99) p = 99; print p}")
-      local filled
-      filled=$(awk "BEGIN {print int(($pct / 100) * $bar_width)}")
-      local empty=$((bar_width - filled))
-      
-      local bar=""
-      for ((i=0; i<filled; i++)); do bar+="█"; done
-      for ((i=0; i<empty; i++)); do bar+="░"; done
-
-      printf "\r      ${CYAN}[${bar}]${RESET} ${BOLD}%3d%%${RESET}  ${DIM}(%s MB / %s MB)${RESET}  " "$pct" "$current_mb" "$total_mb"
-      sleep 0.1
-    done
-
-    wait "$curl_pid" 2>/dev/null || true
-
-    if [ -f "$temp_dest" ] && [ -s "$temp_dest" ]; then
-      local final_bytes=0
-      if [ "$(uname -s)" = "Darwin" ]; then
-        final_bytes=$(stat -f%z "$temp_dest" 2>/dev/null || echo 0)
-      else
-        final_bytes=$(stat -c%s "$temp_dest" 2>/dev/null || echo 0)
-      fi
-      local final_mb
-      final_mb=$(awk "BEGIN {printf \"%.1f\", $final_bytes / 1048576}")
-
-      local full_bar=""
-      for ((i=0; i<bar_width; i++)); do full_bar+="█"; done
-      printf "\r      ${GREEN}[${full_bar}]${RESET} ${BOLD}100%%${RESET}  ${DIM}(%s MB / %s MB)${RESET}  \n" "$final_mb" "$total_mb"
-
-      mv -f "$temp_dest" "$final_dest"
-      chmod +x "$final_dest"
-      downloaded=true
-      success_step "Binary installed to ${CYAN}${final_dest}${RESET}"
-      break
     fi
     rm -f "$temp_dest"
   done
