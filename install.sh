@@ -127,7 +127,7 @@ resolve_release() {
   info_step "2" "Release repository" "${CYAN}github.com/${REPO}${RESET}"
 }
 
-# 3. Download Binary with Realtime Progress Bar
+# 3. Download Binary with Realtime Animated Progress Bar
 download_binary() {
   info_step "3" "Downloading binary" "${DIM}fetching engine from ${REPO}...${RESET}"
   
@@ -143,16 +143,67 @@ download_binary() {
   )
 
   for url in "${urls[@]}"; do
-    printf "\n"
-    if curl -# -fL "$url" -o "$temp_dest"; then
-      if [ -s "$temp_dest" ]; then
-        mv -f "$temp_dest" "$final_dest"
-        chmod +x "$final_dest"
-        downloaded=true
-        printf "\n"
-        success_step "Binary installed to ${CYAN}${final_dest}${RESET}"
-        break
+    # Get total size from content-length
+    local total_bytes
+    total_bytes=$(curl -sIL "$url" 2>/dev/null | grep -i '^content-length:' | tail -1 | awk '{print $2}' | tr -d '\r\n' || true)
+    if [ -z "$total_bytes" ] || ! [[ "$total_bytes" =~ ^[0-9]+$ ]] || [ "$total_bytes" -le 0 ]; then
+      total_bytes=33554432
+    fi
+    local total_mb
+    total_mb=$(awk "BEGIN {printf \"%.1f\", $total_bytes / 1048576}")
+
+    # Start background download
+    rm -f "$temp_dest"
+    curl -fsSL "$url" -o "$temp_dest" 2>/dev/null &
+    local curl_pid=$!
+
+    local bar_width=28
+    while kill -0 "$curl_pid" 2>/dev/null; do
+      if [ -f "$temp_dest" ]; then
+        local current_bytes=0
+        if [ "$(uname -s)" = "Darwin" ]; then
+          current_bytes=$(stat -f%z "$temp_dest" 2>/dev/null || echo 0)
+        else
+          current_bytes=$(stat -c%s "$temp_dest" 2>/dev/null || echo 0)
+        fi
+        
+        if [ "$current_bytes" -gt 0 ]; then
+          local current_mb
+          current_mb=$(awk "BEGIN {printf \"%.1f\", $current_bytes / 1048576}")
+          local pct
+          pct=$(awk "BEGIN {p = int(($current_bytes / $total_bytes) * 100); if (p > 100) p = 100; print p}")
+          local filled
+          filled=$(awk "BEGIN {print int(($pct / 100) * $bar_width)}")
+          local empty=$((bar_width - filled))
+          
+          local bar=""
+          for ((i=0; i<filled; i++)); do bar+="█"; done
+          for ((i=0; i<empty; i++)); do bar+="░"; done
+          
+          printf "\r      ${CYAN}[${bar}]${RESET} ${BOLD}%3d%%${RESET}  ${DIM}(%s MB / %s MB)${RESET}" "$pct" "$current_mb" "$total_mb"
+        fi
       fi
+      sleep 0.1
+    done
+
+    wait "$curl_pid" 2>/dev/null || true
+
+    if [ -f "$temp_dest" ] && [ -s "$temp_dest" ]; then
+      local final_bytes=0
+      if [ "$(uname -s)" = "Darwin" ]; then
+        final_bytes=$(stat -f%z "$temp_dest" 2>/dev/null || echo 0)
+      else
+        final_bytes=$(stat -c%s "$temp_dest" 2>/dev/null || echo 0)
+      fi
+      local final_mb
+      final_mb=$(awk "BEGIN {printf \"%.1f\", $final_bytes / 1048576}")
+      printf "\r      ${GREEN}[████████████████████████████]${RESET} ${BOLD}100%%${RESET}  ${DIM}(%s MB / %s MB)${RESET}\n" "$final_mb" "$final_mb"
+
+      mv -f "$temp_dest" "$final_dest"
+      chmod +x "$final_dest"
+      downloaded=true
+      success_step "Binary installed to ${CYAN}${final_dest}${RESET}"
+      break
     fi
     rm -f "$temp_dest"
   done
