@@ -24,9 +24,8 @@ $Repo = "tracedevtools/Forge-release"
 $BinaryName = "trace-http-bridge.exe"
 
 $AssetCandidates = @(
-    "trace-http-bridge-x86_64-pc-windows-msvc.exe",
     "trace-http-bridge.exe",
-    "trace-http-bridge-windows-x86_64.exe"
+    "trace-http-bridge-x86_64-pc-windows-msvc.exe"
 )
 
 $LocalAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE "AppData\Local" }
@@ -83,12 +82,12 @@ function Detect-Platform {
 
 # 2. Resolve Engine Version
 function Resolve-Release {
-    Show-Step "2" "Release repository" "$CYAN github.com/$Repo $RESET"
+    Show-Step "2" "Release repository" "$CYAN github.com/$Repo (v0.1.0) $RESET"
 }
 
-# 3. Realtime Download
+# 3. Realtime Download with Animated Block Progress Bar
 function Download-Binary {
-    Show-Step "3" "Downloading binary" "$DIM fetching from $Repo...$RESET"
+    Show-Step "3" "Downloading binary" "$DIM fetching engine from $Repo...$RESET"
     
     if (-not (Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
@@ -99,9 +98,8 @@ function Download-Binary {
 
     foreach ($asset in $AssetCandidates) {
         $urls = @(
-            "https://github.com/$Repo/releases/latest/download/$asset",
-            "https://raw.githubusercontent.com/$Repo/main/dist/$asset",
-            "https://raw.githubusercontent.com/$Repo/main/$asset"
+            "https://github.com/$Repo/releases/download/v0.1.0/$asset",
+            "https://github.com/$Repo/releases/latest/download/$asset"
         )
 
         foreach ($url in $urls) {
@@ -114,31 +112,33 @@ function Download-Binary {
                     $totalBytes = [math]::Round($EventArgs.TotalBytesToReceive / 1MB, 1)
                     
                     if ($totalBytes -gt 0) {
-                        $barLength = 28
+                        $barLength = 26
                         $completed = [math]::Floor(($percent / 100) * $barLength)
                         $remaining = $barLength - $completed
                         $bar = ("█" * $completed) + ("░" * $remaining)
-                        Write-Host -NoNewline "`r      $script:CYAN[$bar] $percent%  $bytesIn MB / $totalBytes MB$script:RESET"
+                        Write-Host -NoNewline "`r      $script:CYAN[$bar]$script:RESET $script:BOLD$percent%$script:RESET  $script:DIM($bytesIn MB / $totalBytes MB)$script:RESET  "
                     }
                 } | Out-Null
 
                 $downloadTask = $webClient.DownloadFileTaskAsync($url, $tempFile)
                 while (-not $downloadTask.IsCompleted -and -not $downloadTask.IsFaulted) {
-                    Start-Sleep -Milliseconds 100
+                    Start-Sleep -Milliseconds 80
                 }
-                if ($downloadTask.IsCompleted -and (Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 1000)) {
+                if ($downloadTask.IsCompleted -and (Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 1000000)) {
                     $downloadSuccess = $true
-                    Write-Host ""
-                    Show-Success "Downloaded $CYAN$asset$RESET from $Repo"
+                    $finalBytes = [math]::Round((Get-Item $tempFile).Length / 1MB, 1)
+                    $fullBar = "█" * 26
+                    Write-Host "`r      $script:GREEN[$fullBar]$script:RESET $script:BOLD 100%$script:RESET  $script:DIM($finalBytes MB / $finalBytes MB)$script:RESET  "
+                    Show-Success "Binary installed to $CYAN$FinalBinaryPath$RESET"
                     break
                 }
             } catch {
                 # Fallback to Invoke-WebRequest
                 try {
                     Invoke-WebRequest -Uri $url -OutFile $tempFile -UseBasicParsing
-                    if ((Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 1000)) {
+                    if ((Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 1000000)) {
                         $downloadSuccess = $true
-                        Show-Success "Downloaded $CYAN$asset$RESET from $Repo"
+                        Show-Success "Binary installed to $CYAN$FinalBinaryPath$RESET"
                         break
                     }
                 } catch {}
@@ -149,7 +149,6 @@ function Download-Binary {
 
     if ($downloadSuccess -and (Test-Path $tempFile)) {
         Move-Item -Path $tempFile -Destination $FinalBinaryPath -Force
-        Show-Success "Binary installed to $CYAN$FinalBinaryPath$RESET"
     } else {
         if (Test-Path $tempFile) { Remove-Item $tempFile -Force }
         if (Test-Path $FinalBinaryPath) {
