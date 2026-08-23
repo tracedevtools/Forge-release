@@ -82,30 +82,21 @@ error_exit() {
   exit 1
 }
 
-# 1. Platform Detection & Asset Candidates
+# 1. Platform Detection
 detect_platform() {
   OS="$(uname -s)"
   ARCH="$(uname -m)"
-  ASSET_CANDIDATES=()
   
   case "$OS" in
     Darwin)
       case "$ARCH" in
         arm64)
           PLATFORM_LABEL="macOS (Apple Silicon arm64)"
-          ASSET_CANDIDATES=(
-            "trace-http-bridge-aarch64-apple-darwin"
-            "trace-http-bridge"
-            "trace-http-bridge-macos-arm64"
-          )
+          ASSET_NAME="trace-http-bridge"
           ;;
         x86_64)
           PLATFORM_LABEL="macOS (Intel x86_64)"
-          ASSET_CANDIDATES=(
-            "trace-http-bridge-x86_64-apple-darwin"
-            "trace-http-bridge-macos-x86_64"
-            "trace-http-bridge"
-          )
+          ASSET_NAME="trace-http-bridge"
           ;;
         *) error_exit "Unsupported macOS architecture: $ARCH" ;;
       esac
@@ -114,19 +105,11 @@ detect_platform() {
       case "$ARCH" in
         x86_64)
           PLATFORM_LABEL="Linux (x86_64)"
-          ASSET_CANDIDATES=(
-            "trace-http-bridge-x86_64-unknown-linux-gnu"
-            "trace-http-bridge-linux-x86_64"
-            "trace-http-bridge"
-          )
+          ASSET_NAME="trace-http-bridge"
           ;;
         aarch64|arm64)
           PLATFORM_LABEL="Linux (ARM64)"
-          ASSET_CANDIDATES=(
-            "trace-http-bridge-aarch64-unknown-linux-gnu"
-            "trace-http-bridge-linux-aarch64"
-            "trace-http-bridge"
-          )
+          ASSET_NAME="trace-http-bridge"
           ;;
         *) error_exit "Unsupported Linux architecture: $ARCH" ;;
       esac
@@ -144,34 +127,34 @@ resolve_release() {
   info_step "2" "Release repository" "${CYAN}github.com/${REPO}${RESET}"
 }
 
-# 3. Download Binary with Realtime Progress
+# 3. Download Binary with Realtime Progress Bar
 download_binary() {
-  info_step "3" "Downloading binary" "${DIM}fetching release from ${REPO}...${RESET}"
+  info_step "3" "Downloading binary" "${DIM}fetching engine from ${REPO}...${RESET}"
   
   mkdir -p "$INSTALL_DIR"
   local temp_dest="$INSTALL_DIR/${BINARY_NAME}.tmp"
   local final_dest="$INSTALL_DIR/${BINARY_NAME}"
   local downloaded=false
 
-  for asset in "${ASSET_CANDIDATES[@]}"; do
-    local urls=(
-      "https://github.com/${REPO}/releases/latest/download/${asset}"
-      "https://raw.githubusercontent.com/${REPO}/main/dist/${asset}"
-      "https://raw.githubusercontent.com/${REPO}/main/${asset}"
-    )
+  local urls=(
+    "https://github.com/${REPO}/releases/latest/download/${ASSET_NAME}"
+    "https://github.com/${REPO}/releases/download/v0.1.0/${ASSET_NAME}"
+    "https://raw.githubusercontent.com/${REPO}/main/dist/${ASSET_NAME}"
+  )
 
-    for url in "${urls[@]}"; do
-      if curl -# -fSL "$url" -o "$temp_dest" 2>/dev/null; then
-        if [ -s "$temp_dest" ]; then
-          mv -f "$temp_dest" "$final_dest"
-          chmod +x "$final_dest"
-          downloaded=true
-          success_step "Downloaded ${CYAN}${asset}${RESET} from ${REPO}"
-          break 2
-        fi
-        rm -f "$temp_dest"
+  for url in "${urls[@]}"; do
+    printf "\n"
+    if curl -# -fL "$url" -o "$temp_dest"; then
+      if [ -s "$temp_dest" ]; then
+        mv -f "$temp_dest" "$final_dest"
+        chmod +x "$final_dest"
+        downloaded=true
+        printf "\n"
+        success_step "Binary installed to ${CYAN}${final_dest}${RESET}"
+        break
       fi
-    done
+    fi
+    rm -f "$temp_dest"
   done
 
   if [ "$downloaded" = false ]; then
