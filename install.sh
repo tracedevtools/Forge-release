@@ -93,10 +93,12 @@ detect_platform() {
         arm64)
           PLATFORM_LABEL="macOS (Apple Silicon arm64)"
           ASSET_NAME="trace-http-bridge"
+          EXPECTED_SIZE=37886048
           ;;
         x86_64)
           PLATFORM_LABEL="macOS (Intel x86_64)"
           ASSET_NAME="trace-http-bridge"
+          EXPECTED_SIZE=37886048
           ;;
         *) error_exit "Unsupported macOS architecture: $ARCH" ;;
       esac
@@ -106,10 +108,12 @@ detect_platform() {
         x86_64)
           PLATFORM_LABEL="Linux (x86_64)"
           ASSET_NAME="trace-http-bridge"
+          EXPECTED_SIZE=37886048
           ;;
         aarch64|arm64)
           PLATFORM_LABEL="Linux (ARM64)"
           ASSET_NAME="trace-http-bridge"
+          EXPECTED_SIZE=37886048
           ;;
         *) error_exit "Unsupported Linux architecture: $ARCH" ;;
       esac
@@ -124,10 +128,10 @@ detect_platform() {
 
 # 2. Resolve Release
 resolve_release() {
-  info_step "2" "Release repository" "${CYAN}github.com/${REPO}${RESET}"
+  info_step "2" "Release repository" "${CYAN}github.com/${REPO} (v0.1.0)${RESET}"
 }
 
-# 3. Download Binary with Live Animated Byte Counter
+# 3. Download Binary with Live Block Progress Bar
 download_binary() {
   info_step "3" "Downloading binary" "${DIM}fetching engine from ${REPO}...${RESET}"
   
@@ -137,22 +141,22 @@ download_binary() {
   local downloaded=false
 
   local urls=(
-    "https://github.com/${REPO}/releases/latest/download/${ASSET_NAME}"
     "https://github.com/${REPO}/releases/download/v0.1.0/${ASSET_NAME}"
-    "https://raw.githubusercontent.com/${REPO}/main/dist/${ASSET_NAME}"
+    "https://github.com/${REPO}/releases/latest/download/${ASSET_NAME}"
   )
 
-  local spinner=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-  local spin_idx=0
+  local bar_width=26
+  local total_mb
+  total_mb=$(awk "BEGIN {printf \"%.1f\", $EXPECTED_SIZE / 1048576}")
 
   for url in "${urls[@]}"; do
     rm -f "$temp_dest"
     
-    # Start download in background
-    curl -fsSL "$url" -o "$temp_dest" 2>/dev/null &
+    # Fast download with direct connection
+    curl -fsSL --tcp-nodelay "$url" -o "$temp_dest" 2>/dev/null &
     local curl_pid=$!
 
-    # Live animated progress loop
+    # Real-time block progress bar loop
     while kill -0 "$curl_pid" 2>/dev/null; do
       local current_bytes=0
       if [ -f "$temp_dest" ]; then
@@ -162,13 +166,21 @@ download_binary() {
           current_bytes=$(stat -c%s "$temp_dest" 2>/dev/null || echo 0)
         fi
       fi
+
       local current_mb
       current_mb=$(awk "BEGIN {printf \"%.1f\", $current_bytes / 1048576}")
-      local spin_char="${spinner[$spin_idx]}"
-      spin_idx=$(( (spin_idx + 1) % 10 ))
+      local pct
+      pct=$(awk "BEGIN {p = int(($current_bytes / $EXPECTED_SIZE) * 100); if (p > 99) p = 99; print p}")
+      local filled
+      filled=$(awk "BEGIN {print int(($pct / 100) * $bar_width)}")
+      local empty=$((bar_width - filled))
+      
+      local bar=""
+      for ((i=0; i<filled; i++)); do bar+="█"; done
+      for ((i=0; i<empty; i++)); do bar+="░"; done
 
-      printf "\r      ${CYAN}${spin_char}${RESET} ${BOLD}Downloading engine...${RESET} ${CYAN}${current_mb} MB${RESET} ${DIM}(streaming from GitHub releases)${RESET}   "
-      sleep 0.15
+      printf "\r      ${CYAN}[${bar}]${RESET} ${BOLD}%3d%%${RESET}  ${DIM}(%s MB / %s MB)${RESET}  " "$pct" "$current_mb" "$total_mb"
+      sleep 0.1
     done
 
     wait "$curl_pid" 2>/dev/null || true
@@ -183,7 +195,10 @@ download_binary() {
       local final_mb
       final_mb=$(awk "BEGIN {printf \"%.1f\", $final_bytes / 1048576}")
 
-      printf "\r      ${GREEN}✓${RESET} ${BOLD}Downloaded engine:${RESET} ${GREEN}${final_mb} MB${RESET}                                        \n"
+      local full_bar=""
+      for ((i=0; i<bar_width; i++)); do full_bar+="█"; done
+      printf "\r      ${GREEN}[${full_bar}]${RESET} ${BOLD}100%%${RESET}  ${DIM}(%s MB / %s MB)${RESET}  \n" "$final_mb" "$total_mb"
+
       mv -f "$temp_dest" "$final_dest"
       chmod +x "$final_dest"
       downloaded=true
