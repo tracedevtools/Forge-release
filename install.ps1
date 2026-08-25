@@ -40,7 +40,8 @@ $AllowedExtensionIds = @(
     "jbndfblonpaiajoilmcfjnilbfidnikg",
     "nihkoalbpdeldlfkbpadfjidaampnobn",
     "ijempdjhomdhgjbjekbmdhlknmgmiahe",
-    "picocfmhmdhpefnlajhbgmindmnikpip"
+    "picocfmhmdhpefnlajhbgmindmnikpip",
+    "edapgfkgaeajkhhpchfhljppbpbffggg",
 )
 
 function Show-Banner {
