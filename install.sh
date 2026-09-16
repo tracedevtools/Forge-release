@@ -1,30 +1,32 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  TRACE FORGE — Autonomous Installer (macOS & Linux)
-#  Installs the native engine & registers Chrome Native Messaging host.
+# Trace Forge — One-Line Installer & Service Configurator
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/tracedevtools/Forge-release/main/install.sh | bash
 # ==============================================================================
-set -euo pipefail
 
-# ANSI Colors
-BOLD="\033[1m"
-DIM="\033[2m"
-CYAN="\033[38;2;6;182;212m"
-BLUE="\033[38;2;99;102;241m"
-GREEN="\033[38;2;34;197;94m"
-YELLOW="\033[38;2;234;179;8m"
-RED="\033[38;2;239;68;68m"
-RESET="\033[0m"
+set -eo pipefail
 
-# Fallback if truecolor not supported
-if [ -z "${TERM:-}" ] || [ "$TERM" = "dumb" ]; then
-  BOLD=""
-  DIM=""
+# Visual styling
+if [ -t 1 ]; then
+  BOLD="\033[1m"
+  DIM="\033[2m"
   CYAN="\033[36m"
   BLUE="\033[34m"
   GREEN="\033[32m"
   YELLOW="\033[33m"
   RED="\033[31m"
   RESET="\033[0m"
+else
+  BOLD=""
+  DIM=""
+  CYAN=""
+  BLUE=""
+  GREEN=""
+  YELLOW=""
+  RED=""
+  RESET=""
 fi
 
 HOST_NAME="dev.gettrace.rust.host"
@@ -41,6 +43,7 @@ ALLOWED_EXTENSION_IDS=(
   "nihkoalbpdeldlfkbpadfjidaampnobn"
   "ijempdjhomdhgjbjekbmdhlknmgmiahe"
   "picocfmhmdhpefnlajhbgmindmnikpip"
+  "edapgfkgaeajkhhpchfhljppbpbffggg"
 )
 
 # Banner
@@ -64,7 +67,7 @@ info_step() {
   local num="$1"
   local title="$2"
   local desc="$3"
-  printf "  ${BLUE}${BOLD}[${num}/4]${RESET} ${title} ${DIM}→${RESET} ${desc}\n"
+  printf "  ${BLUE}${BOLD}[${num}/5]${RESET} ${title} ${DIM}→${RESET} ${desc}\n"
 }
 
 success_step() {
@@ -115,7 +118,7 @@ resolve_release() {
   info_step "2" "Release repository" "${CYAN}github.com/${REPO} (v0.1.0)${RESET}"
 }
 
-# 3. Download Binary with Live Progress Bar
+# 3. Download Binary
 download_binary() {
   info_step "3" "Downloading binary" "${DIM}fetching engine from ${REPO}...${RESET}"
   
@@ -131,7 +134,7 @@ download_binary() {
 
   for url in "${urls[@]}"; do
     rm -f "$temp_dest"
-    printf "      ${CYAN}⬇ Downloading trace-http-bridge (~36 MB):${RESET}\n"
+    printf "      ${CYAN}⬇ Downloading trace-http-bridge (~38 MB):${RESET}\n"
     if curl --fail --location --progress-bar "$url" --output "$temp_dest"; then
       if [ -s "$temp_dest" ]; then
         mv -f "$temp_dest" "$final_dest"
@@ -203,7 +206,7 @@ register_manifests() {
 
   success_step "Native messaging manifest registered across ${registered} browser profiles"
 
-  # 5. Greenfield Workspace
+  # Greenfield Workspace
   mkdir -p "$DEFAULT_WORKSPACE" 2>/dev/null || true
   if [ ! -f "$DEFAULT_WORKSPACE/README.md" ]; then
     cat << 'README' > "$DEFAULT_WORKSPACE/README.md"
@@ -215,6 +218,83 @@ README
   success_step "Workspace ready at ${DIM}${DEFAULT_WORKSPACE}${RESET}"
 }
 
+# 5. Background Daemon Registration (Decoupled from Chrome)
+setup_daemon() {
+  local final_dest="$INSTALL_DIR/${BINARY_NAME}"
+
+  if [ "$(uname -s)" = "Darwin" ]; then
+    info_step "5" "Configuring LaunchAgent daemon" "${CYAN}dev.gettrace.forge${RESET}"
+    local agents_dir="$HOME/Library/LaunchAgents"
+    local plist_path="$agents_dir/dev.gettrace.forge.plist"
+    local log_dir="$HOME/.trace/logs"
+
+    mkdir -p "$agents_dir" "$log_dir" 2>/dev/null || true
+
+    cat << PLIST > "$plist_path"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.gettrace.forge</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${final_dest}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>${log_dir}/forge-daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>${log_dir}/forge-daemon.err</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${HOME}/.cargo/bin:${HOME}/.local/bin</string>
+        <key>TRACE_HTTP_PORT</key>
+        <string>8766</string>
+        <key>RUST_BACKTRACE</key>
+        <string>1</string>
+    </dict>
+</dict>
+</plist>
+PLIST
+
+    # Bootstrap with launchctl
+    local uid_num
+    uid_num=$(id -u)
+    launchctl bootout "gui/$uid_num/dev.gettrace.forge" 2>/dev/null || launchctl unload "$plist_path" 2>/dev/null || true
+    if launchctl bootstrap "gui/$uid_num" "$plist_path" 2>/dev/null || launchctl load -w "$plist_path" 2>/dev/null; then
+      success_step "LaunchAgent registered & active (independent from browser, auto-restarts on crash)"
+    else
+      warn_step "Could not load LaunchAgent via launchctl (will start automatically on demand)"
+    fi
+  elif [ "$(uname -s)" = "Linux" ]; then
+    info_step "5" "Configuring systemd user service" "${CYAN}trace-forge${RESET}"
+    local unit_dir="$HOME/.config/systemd/user"
+    mkdir -p "$unit_dir" 2>/dev/null || true
+    cat << SERVICE > "$unit_dir/trace-forge.service"
+[Unit]
+Description=Trace Forge Background Engine
+After=network.target
+
+[Service]
+ExecStart=${final_dest}
+Restart=always
+RestartSec=2
+Environment=TRACE_HTTP_PORT=8766
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:${HOME}/.cargo/bin:${HOME}/.local/bin
+
+[Install]
+WantedBy=default.target
+SERVICE
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable --now trace-forge 2>/dev/null && success_step "systemd user service enabled & running" || true
+  fi
+}
+
 # Summary Screen
 print_summary() {
   local final_dest="$INSTALL_DIR/${BINARY_NAME}"
@@ -222,6 +302,7 @@ print_summary() {
   printf "  ${GREEN}${BOLD}✅ Trace Forge installed successfully!${RESET}\n\n"
   printf "  ${BOLD}Binary:${RESET}    ${CYAN}%s${RESET}\n" "$final_dest"
   printf "  ${BOLD}Host ID:${RESET}   ${DIM}%s${RESET}\n" "$HOST_NAME"
+  printf "  ${BOLD}Daemon:${RESET}    ${DIM}dev.gettrace.forge (independent background daemon)${RESET}\n"
   printf "  ${BOLD}Workspace:${RESET} ${DIM}%s${RESET}\n\n" "$DEFAULT_WORKSPACE"
   printf "  ${BLUE}${BOLD}🚀 Next Step:${RESET} Open Chrome and click ${BOLD}Connect${RESET} in the Trace panel.\n"
   printf "${DIM}──────────────────────────────────────────────────────────────────${RESET}\n\n"
@@ -233,6 +314,7 @@ main() {
   resolve_release
   download_binary
   register_manifests
+  setup_daemon
   print_summary
 }
 
