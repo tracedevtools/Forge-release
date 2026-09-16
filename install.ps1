@@ -1,13 +1,24 @@
 # ==============================================================================
-# Trace Forge — Windows Installer
+#  TRACE FORGE — Windows Installer (PowerShell 5.1 & 7+ Compatible)
+#  Installs the native engine & registers Chrome Native Messaging host.
 #
-# Usage (run in PowerShell):
-#   irm https://raw.githubusercontent.com/tracedevtools/Forge-release/main/install.ps1 | iex
+#  Usage:
+#    irm https://raw.githubusercontent.com/tracedevtools/Forge-release/main/install.ps1 | iex
 # ==============================================================================
 
-$ErrorActionPreference = "Stop"
+[CmdletBinding()]
+param()
 
-# ANSI color codes
+$ErrorActionPreference = 'Stop'
+
+# Force TLS 1.2 for secure downloads from GitHub
+try {
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
+} catch {
+    try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}
+}
+
+# ANSI Colors
 $ESC = [char]27
 $BOLD = "$ESC[1m"
 $DIM = "$ESC[2m"
@@ -65,33 +76,37 @@ function Show-Warn($msg) {
 }
 
 function Show-Error($msg) {
-    Write-Host "`n  $RED${BOLD}✗ Installation failed:$RESET $msg`n"
-    Exit 1
+    Write-Host "`n  $RED${BOLD}✗ Installation failed:$RESET $msg`n" -ForegroundColor Red
+    exit 1
 }
 
-# 1. Platform Detection
+# 1. Platform Detection (works on every Windows PC)
 function Detect-Platform {
-    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-    if ($arch -eq [System.Runtime.InteropServices.Architecture]::X64) {
-        $platformLabel = "Windows (x86_64)"
-    } elseif ($arch -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
+    $is64 = [Environment]::Is64BitOperatingSystem
+    $arch = $env:PROCESSOR_ARCHITEW6432
+    if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
+    if (-not $arch) { $arch = "AMD64" }
+
+    if ($arch -eq "ARM64") {
         $platformLabel = "Windows (ARM64)"
+    } elseif ($is64 -or $arch -eq "AMD64") {
+        $platformLabel = "Windows (x86_64)"
     } else {
-        Show-Error "Unsupported Windows architecture: $arch"
+        $platformLabel = "Windows ($arch)"
     }
 
     Show-Step "1" "Platform detected" "$CYAN$platformLabel$RESET"
 }
 
-# 2. Resolve Release
+# 2. Resolve Engine Version
 function Resolve-Release {
-    Show-Step "2" "Release repository" "$CYAN github.com/$Repo (v0.1.0)$RESET"
+    Show-Step "2" "Release repository" "$CYAN github.com/$Repo (v0.1.0) $RESET"
 }
 
-# 3. Download Binary with Live Progress Bar
+# 3. Fast & Reliable Download
 function Download-Binary {
-    Show-Step "3" "Downloading binary" "$DIM fetching engine from $Repo...$RESET"
-
+    Show-Step "3" "Downloading binary" "$DIM fetching trace-http-bridge.exe (~46 MB)...$RESET"
+    
     if (-not (Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     }
@@ -105,25 +120,35 @@ function Download-Binary {
     )
 
     foreach ($url in $urls) {
+        if (Test-Path $tempFile) { Remove-Item $tempFile -Force -ErrorAction SilentlyContinue }
+
+        # Attempt 1: WebClient (Fastest, handles redirects)
         try {
-            if (Test-Path $tempFile) { Remove-Item $tempFile -Force }
-            Write-Host "      $CYAN⬇ Downloading trace-http-bridge.exe (~46 MB):$RESET"
+            $webClient = New-Object System.Net.WebClient
+            $webClient.Headers.Add("User-Agent", "Trace-Windows-Installer")
+            $webClient.DownloadFile($url, $tempFile)
             
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
-            Invoke-WebRequest -Uri $url -OutFile $tempFile -UseBasicParsing -TimeoutSec 120
-            
-            if ((Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 0)) {
-                Move-Item -Path $tempFile -Destination $FinalBinaryPath -Force
+            if ((Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 1000000)) {
                 $downloadSuccess = $true
-                Show-Success "Binary installed to $CYAN$FinalBinaryPath$RESET"
                 break
             }
-        } catch {
-            if (Test-Path $tempFile) { Remove-Item $tempFile -Force }
-        }
+        } catch {}
+
+        # Attempt 2: Invoke-WebRequest fallback
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tempFile -UseBasicParsing -TimeoutSec 120
+            if ((Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 1000000)) {
+                $downloadSuccess = $true
+                break
+            }
+        } catch {}
     }
 
-    if (-not $downloadSuccess) {
+    if ($downloadSuccess -and (Test-Path $tempFile)) {
+        Move-Item -Path $tempFile -Destination $FinalBinaryPath -Force
+        Show-Success "Binary installed to $CYAN$FinalBinaryPath$RESET"
+    } else {
+        if (Test-Path $tempFile) { Remove-Item $tempFile -Force -ErrorAction SilentlyContinue }
         if (Test-Path $FinalBinaryPath) {
             Show-Warn "Remote release unreachable; using existing binary at $CYAN$FinalBinaryPath$RESET"
         } else {
@@ -152,23 +177,23 @@ $allowedOriginsJson
 "@
 
     $manifestPath = Join-Path $InstallDir "$HostName.json"
-    [System.IO.File]::WriteAllText($manifestPath, $manifestContent, [System.Text.Encoding]::UTF8)
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($manifestPath, $manifestContent, $utf8NoBom)
 
-    # Register in Windows Registry for Chrome, Edge, Brave
-    $regPaths = @(
-        "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$HostName",
-        "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$HostName",
-        "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\$HostName"
+    # Register in Windows Registry for Chrome, Edge, Brave using reg.exe (bulletproof default key handling)
+    $regKeys = @(
+        "HKCU\Software\Google\Chrome\NativeMessagingHosts\$HostName",
+        "HKCU\Software\Microsoft\Edge\NativeMessagingHosts\$HostName",
+        "HKCU\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\$HostName"
     )
 
     $registeredCount = 0
-    foreach ($regPath in $regPaths) {
+    foreach ($regKey in $regKeys) {
         try {
-            if (-not (Test-Path $regPath)) {
-                New-Item -Path $regPath -Force | Out-Null
+            $process = Start-Process -FilePath "reg.exe" -ArgumentList "add `"$regKey`" /ve /t REG_SZ /d `"$manifestPath`" /f" -NoNewWindow -Wait -PassThru
+            if ($process.ExitCode -eq 0) {
+                $registeredCount++
             }
-            Set-ItemProperty -Path $regPath -Name "(default)" -Value $manifestPath -Force | Out-Null
-            $registeredCount++
         } catch {}
     }
 
