@@ -1,32 +1,26 @@
 # ==============================================================================
-#  TRACE FORGE — Autonomous Installer (Windows PowerShell)
-#  Installs the native engine & registers Chrome Native Messaging host.
+# Trace Forge — Windows Installer
+#
+# Usage (run in PowerShell):
+#   irm https://raw.githubusercontent.com/tracedevtools/Forge-release/main/install.ps1 | iex
 # ==============================================================================
 
-[CmdletBinding()]
-param()
+$ErrorActionPreference = "Stop"
 
-$ErrorActionPreference = 'Stop'
-
-# ANSI Colors
+# ANSI color codes
 $ESC = [char]27
 $BOLD = "$ESC[1m"
 $DIM = "$ESC[2m"
-$CYAN = "$ESC[38;2;6;182;212m"
-$BLUE = "$ESC[38;2;99;102;241m"
-$GREEN = "$ESC[38;2;34;197;94m"
-$YELLOW = "$ESC[38;2;234;179;8m"
-$RED = "$ESC[38;2;239;68;68m"
+$CYAN = "$ESC[36m"
+$BLUE = "$ESC[34m"
+$GREEN = "$ESC[32m"
+$YELLOW = "$ESC[33m"
+$RED = "$ESC[31m"
 $RESET = "$ESC[0m"
 
 $HostName = "dev.gettrace.rust.host"
 $Repo = "tracedevtools/Forge-release"
 $BinaryName = "trace-http-bridge.exe"
-
-$AssetCandidates = @(
-    "trace-http-bridge.exe",
-    "trace-http-bridge-x86_64-pc-windows-msvc.exe"
-)
 
 $LocalAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE "AppData\Local" }
 $InstallDir = Join-Path $LocalAppData "trace-rust\native-host"
@@ -71,25 +65,33 @@ function Show-Warn($msg) {
 }
 
 function Show-Error($msg) {
-    Write-Host "`n  $RED${BOLD}✗ Installation failed:$RESET $msg`n" -ForegroundColor Red
-    exit 1
+    Write-Host "`n  $RED${BOLD}✗ Installation failed:$RESET $msg`n"
+    Exit 1
 }
 
 # 1. Platform Detection
 function Detect-Platform {
     $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-    Show-Step "1" "Platform detected" "$CYAN Windows x86_64 ($arch) $RESET"
+    if ($arch -eq [System.Runtime.InteropServices.Architecture]::X64) {
+        $platformLabel = "Windows (x86_64)"
+    } elseif ($arch -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
+        $platformLabel = "Windows (ARM64)"
+    } else {
+        Show-Error "Unsupported Windows architecture: $arch"
+    }
+
+    Show-Step "1" "Platform detected" "$CYAN$platformLabel$RESET"
 }
 
-# 2. Resolve Engine Version
+# 2. Resolve Release
 function Resolve-Release {
-    Show-Step "2" "Release repository" "$CYAN github.com/$Repo (v0.1.0) $RESET"
+    Show-Step "2" "Release repository" "$CYAN github.com/$Repo (v0.1.0)$RESET"
 }
 
-# 3. Realtime Download with Animated Block Progress Bar
+# 3. Download Binary with Live Progress Bar
 function Download-Binary {
     Show-Step "3" "Downloading binary" "$DIM fetching engine from $Repo...$RESET"
-    
+
     if (-not (Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     }
@@ -97,61 +99,31 @@ function Download-Binary {
     $tempFile = Join-Path $InstallDir "$BinaryName.tmp"
     $downloadSuccess = $false
 
-    foreach ($asset in $AssetCandidates) {
-        $urls = @(
-            "https://github.com/$Repo/releases/download/v0.1.0/$asset",
-            "https://github.com/$Repo/releases/latest/download/$asset"
-        )
+    $urls = @(
+        "https://github.com/$Repo/releases/download/v0.1.0/$BinaryName",
+        "https://github.com/$Repo/releases/latest/download/$BinaryName"
+    )
 
-        foreach ($url in $urls) {
-            try {
-                $webClient = New-Object System.Net.WebClient
-                
-                Register-ObjectEvent -InputObject $webClient -EventName DownloadProgressChanged -Action {
-                    $percent = $EventArgs.ProgressPercentage
-                    $bytesIn = [math]::Round($EventArgs.BytesReceived / 1MB, 1)
-                    $totalBytes = [math]::Round($EventArgs.TotalBytesToReceive / 1MB, 1)
-                    
-                    if ($totalBytes -gt 0) {
-                        $barLength = 26
-                        $completed = [math]::Floor(($percent / 100) * $barLength)
-                        $remaining = $barLength - $completed
-                        $bar = ("█" * $completed) + ("░" * $remaining)
-                        Write-Host -NoNewline "`r      $script:CYAN[$bar]$script:RESET $script:BOLD$percent%$script:RESET  $script:DIM($bytesIn MB / $totalBytes MB)$script:RESET  "
-                    }
-                } | Out-Null
-
-                $downloadTask = $webClient.DownloadFileTaskAsync($url, $tempFile)
-                while (-not $downloadTask.IsCompleted -and -not $downloadTask.IsFaulted) {
-                    Start-Sleep -Milliseconds 80
-                }
-                if ($downloadTask.IsCompleted -and (Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 1000000)) {
-                    $downloadSuccess = $true
-                    $finalBytes = [math]::Round((Get-Item $tempFile).Length / 1MB, 1)
-                    $fullBar = "█" * 26
-                    Write-Host "`r      $script:GREEN[$fullBar]$script:RESET $script:BOLD 100%$script:RESET  $script:DIM($finalBytes MB / $finalBytes MB)$script:RESET  "
-                    Show-Success "Binary installed to $CYAN$FinalBinaryPath$RESET"
-                    break
-                }
-            } catch {
-                # Fallback to Invoke-WebRequest
-                try {
-                    Invoke-WebRequest -Uri $url -OutFile $tempFile -UseBasicParsing
-                    if ((Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 1000000)) {
-                        $downloadSuccess = $true
-                        Show-Success "Binary installed to $CYAN$FinalBinaryPath$RESET"
-                        break
-                    }
-                } catch {}
+    foreach ($url in $urls) {
+        try {
+            if (Test-Path $tempFile) { Remove-Item $tempFile -Force }
+            Write-Host "      $CYAN⬇ Downloading trace-http-bridge.exe (~46 MB):$RESET"
+            
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+            Invoke-WebRequest -Uri $url -OutFile $tempFile -UseBasicParsing -TimeoutSec 120
+            
+            if ((Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 0)) {
+                Move-Item -Path $tempFile -Destination $FinalBinaryPath -Force
+                $downloadSuccess = $true
+                Show-Success "Binary installed to $CYAN$FinalBinaryPath$RESET"
+                break
             }
+        } catch {
+            if (Test-Path $tempFile) { Remove-Item $tempFile -Force }
         }
-        if ($downloadSuccess) { break }
     }
 
-    if ($downloadSuccess -and (Test-Path $tempFile)) {
-        Move-Item -Path $tempFile -Destination $FinalBinaryPath -Force
-    } else {
-        if (Test-Path $tempFile) { Remove-Item $tempFile -Force }
+    if (-not $downloadSuccess) {
         if (Test-Path $FinalBinaryPath) {
             Show-Warn "Remote release unreachable; using existing binary at $CYAN$FinalBinaryPath$RESET"
         } else {
